@@ -17,7 +17,7 @@
     "sandbox:e2e": "bun scripts/sandbox-e2e.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.100.0",
+    "@anthropic-ai/sdk": "^0.115.0",
     "shipmail": "^0.4.6",
     "zod": "^4.3.6"
   },
