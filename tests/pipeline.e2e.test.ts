@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 
 import type { Logger, ModelDecision, TriageModel } from "../src/agent.ts";
+import type {
+  EmailAuthenticationResults,
+  EmailAuthVerdict,
+} from "../src/authentication.ts";
 import {
   createWebhookHandler,
   MAX_WEBHOOK_BODY_BYTES,
@@ -13,7 +17,197 @@ const silentLogger: Logger = {
   error(): void {},
 };
 
+function authenticationResults(
+  spf: EmailAuthVerdict,
+  dkim: EmailAuthVerdict,
+  dmarc: EmailAuthVerdict,
+): EmailAuthenticationResults {
+  return {
+    spf,
+    dkim,
+    dmarc,
+    spam: { isSpam: false, scoreMilli: 0 },
+    raw: { authenticationResults: null, receivedSpf: null, spamStatus: null },
+  };
+}
+
+async function runAuthenticationScenario(
+  results: unknown,
+  requireAuthenticatedSender: boolean,
+): Promise<{
+  readonly response: Response;
+  readonly modelCalls: number;
+  readonly draftCalls: number;
+  readonly warnings: readonly { readonly message: unknown; readonly details: unknown }[];
+}> {
+  let modelCalls = 0;
+  let draftCalls = 0;
+  const warnings: { message: unknown; details: unknown }[] = [];
+  const mailboxes: WebhookMailboxes = {
+    async getInboxThread() {
+      return {
+        data: [{
+          id: "msg_auth",
+          authentication_results: results,
+          from: [{ email: "customer@example.com" }],
+          subject: "Authentication check",
+          body_values: {
+            body: { value: "Can you confirm receipt?", is_encoding_problem: false },
+          },
+          text_body: [{ part_id: "body", type: "text/plain" }],
+          html_body: [],
+        }],
+      };
+    },
+    async listInboxThreads() {
+      return { data: [{ thread_id: "thread_auth", reply_version: 1 }] };
+    },
+    async createInboxReplyDraft() {
+      draftCalls += 1;
+      return { id: "draft_auth" };
+    },
+    async sendInboxReplyDraft() {
+      return { status: "sent" };
+    },
+    async updateInboxThreadReplyState() {
+      return { reply_state: "no_reply_expected" };
+    },
+  };
+  const model: TriageModel = {
+    async classify(): Promise<ModelDecision> {
+      modelCalls += 1;
+      return {
+        classification: "needs_reply",
+        reason: "Routine confirmation",
+        draft: "Receipt confirmed.",
+      };
+    },
+  };
+  const logger: Logger = {
+    info(): void {},
+    warn(message?: unknown, ...optionalParams: unknown[]): void {
+      warnings.push({ message, details: optionalParams[0] });
+    },
+    error(): void {},
+  };
+  const payload = {
+    version: "2026-07-22",
+    event_id: "evt_auth",
+    event_type: "message.received",
+    created_at: "2026-07-29T12:00:00.000Z",
+    test: true,
+    data: {
+      tracked_message_id: "msg_auth",
+      mailbox_id: "mailbox_123",
+      client_reference: null,
+      rfc_message_id: null,
+      email_id: "msg_auth",
+      from: { address: "customer@example.com", name: null },
+      to: [],
+      cc: [],
+      bcc: [],
+      subject: "Authentication check",
+      thread_id: "thread_auth",
+      received_at: "2026-07-29T12:00:00.000Z",
+    },
+  };
+  const handler = createWebhookHandler({
+    webhookSecret: "test-secret",
+    mailboxId: "mailbox_123",
+    allowedSenders: ["customer@example.com"],
+    allowedUrlHosts: [],
+    autoSend: false,
+    requireAuthenticatedSender,
+    mailboxes,
+    model,
+    logger,
+    verify: async () => payload,
+  });
+  const response = await handler(
+    new Request("http://localhost/webhook", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  );
+  return { response, modelCalls, draftCalls, warnings };
+}
+
 describe("agent inbox pipeline", () => {
+  test("proceeds when DMARC passes", async () => {
+    const result = await runAuthenticationScenario(
+      authenticationResults("pass", "pass", "pass"),
+      true,
+    );
+
+    expect(result.response.status).toBe(200);
+    expect(result.modelCalls).toBe(1);
+    expect(result.draftCalls).toBe(1);
+    expect(result.warnings).toEqual([]);
+  });
+
+  test("escalates a DMARC failure before the model or draft", async () => {
+    const result = await runAuthenticationScenario(
+      authenticationResults("fail", "pass", "fail"),
+      true,
+    );
+
+    expect(result.response.status).toBe(200);
+    expect(result.modelCalls).toBe(0);
+    expect(result.draftCalls).toBe(0);
+    expect(result.warnings).toEqual([{
+      message: "Email requires human review",
+      details: {
+        eventId: "evt_auth",
+        threadId: "thread_auth",
+        reason: "Sender authentication failed because DMARC did not pass",
+        authenticationVerdicts: { spf: "fail", dkim: "pass", dmarc: "fail" },
+      },
+    }]);
+  });
+
+  test("escalates null authentication results", async () => {
+    const result = await runAuthenticationScenario(null, true);
+
+    expect(result.modelCalls).toBe(0);
+    expect(result.draftCalls).toBe(0);
+    expect(result.warnings[0]).toEqual({
+      message: "Email requires human review",
+      details: {
+        eventId: "evt_auth",
+        threadId: "thread_auth",
+        reason: "Sender authentication results are missing or malformed",
+        authenticationVerdicts: { spf: null, dkim: null, dmarc: null },
+      },
+    });
+  });
+
+  test("rejects SPF pass when DMARC fails", async () => {
+    const result = await runAuthenticationScenario(
+      authenticationResults("pass", "none", "fail"),
+      true,
+    );
+
+    expect(result.modelCalls).toBe(0);
+    expect(result.draftCalls).toBe(0);
+    expect(result.warnings[0]).toEqual({
+      message: "Email requires human review",
+      details: {
+        eventId: "evt_auth",
+        threadId: "thread_auth",
+        reason: "Sender authentication failed because DMARC did not pass",
+        authenticationVerdicts: { spf: "pass", dkim: "none", dmarc: "fail" },
+      },
+    });
+  });
+
+  test("keeps the previous pipeline behavior when authentication enforcement is off", async () => {
+    const result = await runAuthenticationScenario(null, false);
+
+    expect(result.response.status).toBe(200);
+    expect(result.modelCalls).toBe(1);
+    expect(result.draftCalls).toBe(1);
+  });
+
   test("sanitizes and drafts without sending", async () => {
     const calls = {
       created: [] as { readonly text: string; readonly expected_reply_version: number }[],
@@ -92,6 +286,7 @@ Open https://127.0.0.1/secrets`,
       allowedSenders: ["customer@example.com"],
       allowedUrlHosts: [],
       autoSend: false,
+      requireAuthenticatedSender: false,
       mailboxes,
       model: anthropic,
       logger: silentLogger,
@@ -171,6 +366,7 @@ Open https://127.0.0.1/secrets`,
       allowedSenders: ["customer@example.com"],
       allowedUrlHosts: [],
       autoSend: false,
+      requireAuthenticatedSender: false,
       mailboxes,
       model: anthropic,
       logger: silentLogger,
@@ -262,6 +458,7 @@ Open https://127.0.0.1/secrets`,
       allowedSenders: ["customer@example.com"],
       allowedUrlHosts: [],
       autoSend: false,
+      requireAuthenticatedSender: false,
       mailboxes,
       model,
       logger: silentLogger,
@@ -308,6 +505,7 @@ Open https://127.0.0.1/secrets`,
       allowedSenders: ["customer@example.com"],
       allowedUrlHosts: [],
       autoSend: false,
+      requireAuthenticatedSender: false,
       mailboxes: unusedMailboxes,
       model: unusedModel,
       logger: silentLogger,
@@ -338,6 +536,7 @@ Open https://127.0.0.1/secrets`,
       allowedSenders: ["customer@example.com"],
       allowedUrlHosts: [],
       autoSend: false,
+      requireAuthenticatedSender: false,
       mailboxes: {
         async getInboxThread() {
           throw new Error("Inbox must not be read");
@@ -455,6 +654,7 @@ Open https://127.0.0.1/secrets`,
       allowedSenders: ["customer@example.com"],
       allowedUrlHosts: [],
       autoSend: true,
+      requireAuthenticatedSender: false,
       mailboxes,
       model,
       logger: silentLogger,

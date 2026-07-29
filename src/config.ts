@@ -27,10 +27,7 @@ const envSchema = z.object({
     .enum(["true", "false"])
     .default("false")
     .transform((value) => value === "true"),
-  REQUIRE_AUTHENTICATED_SENDER: z
-    .enum(["true", "false"])
-    .default("false")
-    .transform((value) => value === "true"),
+  REQUIRE_AUTHENTICATED_SENDER: z.enum(["true", "false"]).optional(),
 });
 export type AppConfig = {
   readonly shipmailApiKey: string;
@@ -41,15 +38,10 @@ export type AppConfig = {
   readonly allowedSenders: readonly string[];
   readonly allowedUrlHosts: readonly string[];
   readonly autoSend: boolean;
-  readonly requireAuthenticatedSender: false;
+  readonly requireAuthenticatedSender: boolean;
 };
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const parsed = envSchema.parse(env);
-  if (parsed.REQUIRE_AUTHENTICATED_SENDER) {
-    throw new Error(
-      "REQUIRE_AUTHENTICATED_SENDER cannot be enabled because Shipmail inbox messages do not expose authentication results",
-    );
-  }
   return {
     shipmailApiKey: parsed.SHIPMAIL_API_KEY,
     mailboxId: parsed.SHIPMAIL_MAILBOX_ID,
@@ -59,6 +51,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     allowedSenders: parsed.SHIPMAIL_ALLOWED_SENDERS,
     allowedUrlHosts: parsed.SHIPMAIL_ALLOWED_URL_HOSTS,
     autoSend: parsed.AUTO_SEND,
-    requireAuthenticatedSender: false,
+    requireAuthenticatedSender:
+      parsed.REQUIRE_AUTHENTICATED_SENDER === undefined
+        ? parsed.AUTO_SEND
+        : parsed.REQUIRE_AUTHENTICATED_SENDER === "true",
   };
 }

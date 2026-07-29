@@ -12,6 +12,7 @@ const handler = createWebhookHandler({
   allowedSenders: config.allowedSenders,
   allowedUrlHosts: config.allowedUrlHosts,
   autoSend: config.autoSend,
+  requireAuthenticatedSender: config.requireAuthenticatedSender,
   mailboxes: shipmail.mailboxes,
   model: createAnthropicTriageModel(config.anthropicApiKey),
 });

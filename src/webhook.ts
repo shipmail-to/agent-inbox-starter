@@ -8,6 +8,7 @@ import {
   type Logger,
   type TriageModel,
 } from "./agent.ts";
+import { parseAuthenticationResults } from "./authentication.ts";
 import { secureInboundMessage } from "./security.ts";
 
 export const MAX_WEBHOOK_BODY_BYTES = 1024 * 1024;
@@ -43,6 +44,8 @@ const messageReceivedSchema = z
 
 type ThreadMessage = {
   readonly id: string;
+  // The API returns this field, but shipmail 0.4.10 does not declare it yet.
+  readonly authentication_results?: unknown;
   readonly from: readonly { readonly email: string | null }[] | null;
   readonly subject: string | null;
   readonly body_values: Readonly<
@@ -79,6 +82,7 @@ export type WebhookHandlerDependencies = {
   readonly allowedSenders: readonly string[];
   readonly allowedUrlHosts: readonly string[];
   readonly autoSend: boolean;
+  readonly requireAuthenticatedSender: boolean;
   readonly mailboxes: WebhookMailboxes;
   readonly model: TriageModel;
   readonly verify?: WebhookVerifier | undefined;
@@ -200,6 +204,24 @@ async function processMessageReceived(
   const summary = summaries.data.find((item) => item.thread_id === threadId);
   if (message === undefined || summary === undefined) {
     throw new Error("Could not resolve the inbound message and current reply version");
+  }
+  const authenticationResults = parseAuthenticationResults(message.authentication_results);
+  if (dependencies.requireAuthenticatedSender && authenticationResults?.dmarc !== "pass") {
+    const reason =
+      authenticationResults === null
+        ? "Sender authentication results are missing or malformed"
+        : "Sender authentication failed because DMARC did not pass";
+    logger.warn("Email requires human review", {
+      eventId: event.event_id,
+      threadId,
+      reason,
+      authenticationVerdicts: {
+        spf: authenticationResults?.spf ?? null,
+        dkim: authenticationResults?.dkim ?? null,
+        dmarc: authenticationResults?.dmarc ?? null,
+      },
+    });
+    return { classification: "escalate", reason };
   }
   const secured = secureInboundMessage(
     {

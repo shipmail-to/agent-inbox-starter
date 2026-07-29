@@ -12,6 +12,7 @@ const server = startWebhookServer(config.port, {
   allowedSenders: config.allowedSenders,
   allowedUrlHosts: config.allowedUrlHosts,
   autoSend: config.autoSend,
+  requireAuthenticatedSender: config.requireAuthenticatedSender,
   mailboxes: shipmail.mailboxes,
   model: createAnthropicTriageModel(config.anthropicApiKey),
 });
