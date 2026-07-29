@@ -69,8 +69,7 @@ API key.
    `https://your-tunnel.example/webhook`. Put the webhook's signing secret in
    `SHIPMAIL_WEBHOOK_SECRET`.
 
-The health endpoint is `GET /health` on the Bun server. It is not available on the Vercel
-deployment, which only routes `POST /api/webhook`.
+The health endpoint is `GET /health`.
 
 ## Configuration
 
@@ -165,7 +164,13 @@ The script calls `mailboxes.injectSandboxInbound`. Its default sender is
 Override it with `SANDBOX_FROM` when needed. The script is not part of `bun test` and requires a
 real Shipmail API key.
 
-## Deploy to Railway
+## Deploy
+
+This runs as a long-lived process, which is what the shape needs: the webhook
+acknowledges immediately and finishes the work on a background queue, and the
+deduplication store lives in memory by default. A serverless function has nowhere to
+keep either, so use anything that runs a container or a persistent process. Railway
+is used below as an example; Fly, Render, and a plain Docker host work the same way.
 
 Create a service from this repository, add the environment variables from `.env.example`, and use:
 
@@ -177,20 +182,9 @@ bun run start
 Railway supplies `PORT`, which the starter reads. Set the health check to `/health`, then create the
 Shipmail webhook at `https://your-service.example/webhook`.
 
-## Deploy to Vercel
-
-`api/webhook.ts` exports a `POST` handler as a Vercel Function. Import the repository, add all
-required environment variables, and deploy. Create the Shipmail webhook at:
-
-```text
-https://your-project.vercel.app/api/webhook
-```
-
-Serverless has nowhere to keep background work, so the Vercel adapter waits for the queued work
-before the invocation ends. That reinstates the request-duration coupling the queue exists to avoid,
-which is why `vercel.json` sets a generous `maxDuration`. It also means the in-memory event store
-does not survive between invocations: use a shared store in production. The Bun entrypoint in
-`src/index.ts` does not have either limitation.
+If you do need to run this on a serverless platform, the in-memory `EventStore` is the
+first thing to replace: a function that is frozen between invocations cannot remember
+which events it has already handled, so every retry would be reprocessed.
 
 ## Extending it
 
