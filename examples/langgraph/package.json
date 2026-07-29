@@ -1,0 +1,14 @@
+{
+  "name": "shipmail-agent-inbox-langgraph-example",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun index.ts"
+  },
+  "dependencies": {
+    "@langchain/anthropic": "latest",
+    "@langchain/langgraph": "latest",
+    "@langchain/core": "latest",
+    "zod": "latest"
+  }
+}

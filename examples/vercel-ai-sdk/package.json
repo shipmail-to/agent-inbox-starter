@@ -1,0 +1,13 @@
+{
+  "name": "shipmail-agent-inbox-vercel-ai-example",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun index.ts"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "latest",
+    "ai": "latest",
+    "zod": "latest"
+  }
+}
