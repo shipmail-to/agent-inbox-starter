@@ -11,6 +11,10 @@ const requiredEnvironment = {
 };
 
 describe("configuration", () => {
+  test("keeps sending off unless it is explicitly enabled", () => {
+    expect(loadConfig(requiredEnvironment).autoSend).toBe(false);
+  });
+
   test("keeps authenticated-sender enforcement off in draft-only mode by default", () => {
     expect(loadConfig(requiredEnvironment).requireAuthenticatedSender).toBe(false);
   });
@@ -33,5 +37,19 @@ describe("configuration", () => {
       loadConfig({ ...requiredEnvironment, REQUIRE_AUTHENTICATED_SENDER: "true" })
         .requireAuthenticatedSender,
     ).toBe(true);
+  });
+
+  test("rejects a wildcard allowlist entry for a public mail provider", () => {
+    expect(() =>
+      loadConfig({ ...requiredEnvironment, SHIPMAIL_ALLOWED_SENDERS: "*@gmail.com" }),
+    ).toThrow("wildcard for a public mail provider");
+  });
+
+  test("allows a wildcard for a domain the operator controls", () => {
+    const config = loadConfig({
+      ...requiredEnvironment,
+      SHIPMAIL_ALLOWED_SENDERS: "*@acme.com,person@example.com",
+    });
+    expect(config.allowedSenders).toEqual(["*@acme.com", "person@example.com"]);
   });
 });

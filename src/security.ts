@@ -1,7 +1,6 @@
-import { isIP } from "node:net";
-
 const MAX_SUBJECT_LENGTH = 500;
 const MAX_BODY_LENGTH = 12_000;
+const MAX_DRAFT_LENGTH = 4_000;
 const TRUNCATION_MARKER = "\n[content truncated]";
 const REMOVED_INSTRUCTION = "[removed: instruction-like content]";
 const REMOVED_URL = "[link removed]";
@@ -17,6 +16,10 @@ const PRIVATE_HOST_NAME_PATTERNS: readonly RegExp[] = [
   /\.lan$/i,
   /\.home\.arpa$/i,
 ];
+
+// A best-effort signal that a line is trying to steer the model, not a boundary.
+// Any wrapping, encoding, or translation defeats these patterns, so a hit escalates
+// the message for human review rather than being treated as a fix. See README.
 const INSTRUCTION_PATTERNS: readonly RegExp[] = [
   /\bignore\b.{0,40}\b(previous|prior|above|system|developer)\b/i,
   /\b(ignore|disregard|override|bypass)\b.{0,40}\b(instruction|rule|policy|guardrail)\b/i,
@@ -33,7 +36,11 @@ const INSTRUCTION_PATTERNS: readonly RegExp[] = [
   /<\s*\/?\s*(system|developer|assistant|tool|instructions?)\b/i,
   /\bprompt\s*injection\b/i,
 ];
-const URL_REGEX = /\bhttps?:\/\/[^\s<>"'`]+/giu;
+
+// Anything scheme-prefixed, plus bare hosts that carry a path. Requiring the path
+// keeps ordinary prose ("node.js", "v1.2") out of the match.
+const URL_REGEX =
+  /\b[a-z][a-z0-9+.-]*:(?:\/\/)?[^\s<>"'`]+|\b(?:[a-z0-9-]+\.)+[a-z]{2,}\/[^\s<>"'`]*/giu;
 
 export type SenderPolicy = {
   readonly allowedSenders: readonly string[];
@@ -43,6 +50,7 @@ export type RawInboundMessage = {
   readonly sender: string;
   readonly subject: string;
   readonly body: string;
+  readonly bodyIsHtml: boolean;
 };
 export type SecuredInboundMessage = {
   readonly sender: string;
@@ -72,84 +80,13 @@ export function isSenderAllowed(sender: string, allowlist: readonly string[]): b
   });
 }
 
-function ipv4ToOctets(address: string): readonly number[] | null {
-  const parts = address.split(".");
-  if (parts.length !== 4) return null;
-  const octets: number[] = [];
-  for (const part of parts) {
-    if (!/^\d{1,3}$/.test(part)) return null;
-    const value = Number(part);
-    if (value > 255) return null;
-    octets.push(value);
-  }
-  return octets;
-}
-
-function isPrivateIPv4(address: string): boolean {
-  const octets = ipv4ToOctets(address);
-  if (octets === null) return true;
-  const first = octets[0] ?? 0;
-  const second = octets[1] ?? 0;
-  if (first === 0 || first === 10 || first === 127 || first >= 224) return true;
-  if (first === 100 && second >= 64 && second <= 127) return true;
-  if (first === 169 && second === 254) return true;
-  if (first === 172 && second >= 16 && second <= 31) return true;
-  if (first === 192 && (second === 0 || second === 168)) return true;
-  if (first === 198 && (second === 18 || second === 19 || second === 51)) return true;
-  if (first === 203 && second === 0) return true;
-  return false;
-}
-
-function expandIPv6(address: string): readonly string[] | null {
-  const halves = address.toLowerCase().split("::");
-  if (halves.length > 2) return null;
-  function expandMixed(parts: readonly string[]): string[] | null {
-    if (parts.length === 0) return [];
-    const last = parts.at(-1) ?? "";
-    if (!last.includes(".")) return [...parts];
-    const octets = ipv4ToOctets(last);
-    if (octets === null) return null;
-    const high = (((octets[0] ?? 0) << 8) | (octets[1] ?? 0)).toString(16);
-    const low = (((octets[2] ?? 0) << 8) | (octets[3] ?? 0)).toString(16);
-    return [...parts.slice(0, -1), high, low];
-  }
-  const leftRaw = halves[0] ?? "";
-  const rightRaw = halves[1] ?? "";
-  const left = expandMixed(leftRaw.length === 0 ? [] : leftRaw.split(":"));
-  const right = expandMixed(rightRaw.length === 0 ? [] : rightRaw.split(":"));
-  if (left === null || right === null) return null;
-  if (halves.length === 1) return left.length === 8 ? left : null;
-  const fillCount = 8 - left.length - right.length;
-  if (fillCount < 1) return null;
-  return [...left, ...Array.from({ length: fillCount }, () => "0"), ...right];
-}
-
-function isPrivateIPv6(address: string): boolean {
-  const segments = expandIPv6(address);
-  if (segments === null || segments.length !== 8) return true;
-  const values = segments.map((segment) => Number.parseInt(segment, 16));
-  if (values.some((segment) => Number.isNaN(segment))) return true;
-  const first = values[0] ?? 0;
-  const leadingZero = values.slice(0, 7).every((segment) => segment === 0);
-  if (leadingZero && ((values[7] ?? 0) === 0 || (values[7] ?? 0) === 1)) return true;
-  if (first >= 0xfc00 && first <= 0xfdff) return true;
-  if (first >= 0xfe80 && first <= 0xfebf) return true;
-  if (first >= 0xff00) return true;
-  if ((values[0] ?? 0) === 0x2001 && (values[1] ?? 0) === 0x0db8) return true;
-  if ((values[0] ?? 0) === 0x0064 && (values[1] ?? 0) === 0xff9b) return true;
-  const mapped =
-    values.slice(0, 5).every((segment) => segment === 0) && (values[5] ?? 0) === 0xffff;
-  if (mapped) {
-    const high = values[6] ?? 0;
-    const low = values[7] ?? 0;
-    return isPrivateIPv4(
-      `${(high >>> 8) & 0xff}.${high & 0xff}.${(low >>> 8) & 0xff}.${low & 0xff}`,
-    );
-  }
-  return values.slice(0, 6).every((segment) => segment === 0);
-}
-
-export function isPublicHttpsUrl(rawUrl: string): boolean {
+/**
+ * Whether a URL is shaped like one an allowlist entry could name. This is a
+ * syntactic check for redaction, not an SSRF control: nothing here resolves DNS,
+ * so a public hostname pointing at a private address still passes. If you add a
+ * tool that fetches URLs, pin the resolved IP at fetch time.
+ */
+export function isAllowlistableUrl(rawUrl: string): boolean {
   let parsed: URL;
   try {
     parsed = new URL(rawUrl);
@@ -159,20 +96,15 @@ export function isPublicHttpsUrl(rawUrl: string): boolean {
   if (parsed.protocol !== "https:" || parsed.username.length > 0 || parsed.password.length > 0) {
     return false;
   }
-  let host = parsed.hostname.toLowerCase();
-  if (host.startsWith("[") && host.endsWith("]")) host = host.slice(1, -1);
-  if (host.length === 0 || PRIVATE_HOST_NAME_PATTERNS.some((pattern) => pattern.test(host))) {
-    return false;
-  }
-  const addressKind = isIP(host);
-  if (addressKind === 4) return !isPrivateIPv4(host);
-  if (addressKind === 6) return !isPrivateIPv6(host);
-  if (/^[0-9]+$/.test(host) || /^0x[0-9a-f]+$/i.test(host)) return false;
-  return true;
+  const host = parsed.hostname.toLowerCase();
+  if (host.length === 0 || host.startsWith("[")) return false;
+  if (PRIVATE_HOST_NAME_PATTERNS.some((pattern) => pattern.test(host))) return false;
+  // Reject bare IPs and numeric forms: allowlist entries name hostnames.
+  return /^(?:[a-z0-9-]+\.)+[a-z]{2,}$/.test(host);
 }
 
 export function isUrlAllowed(rawUrl: string, allowedHosts: readonly string[]): boolean {
-  if (!isPublicHttpsUrl(rawUrl)) return false;
+  if (!isAllowlistableUrl(rawUrl)) return false;
   const hostname = new URL(rawUrl).hostname.toLowerCase();
   return allowedHosts.some((entry) => {
     const normalized = entry.trim().toLowerCase();
@@ -243,8 +175,13 @@ function neutralizeInstructions(value: string) {
   return { text, removed };
 }
 
-function sanitizeContent(value: string, maxLength: number, allowedUrlHosts: readonly string[]) {
-  const plain = stripHtml(value).replace(DANGEROUS_CHARS_REGEX, "");
+function sanitizeInbound(
+  value: string,
+  maxLength: number,
+  allowedUrlHosts: readonly string[],
+  isHtml: boolean,
+) {
+  const plain = (isHtml ? stripHtml(value) : value).replace(DANGEROUS_CHARS_REGEX, "");
   const instructions = neutralizeInstructions(plain);
   const urls = rewriteUrls(instructions.text, allowedUrlHosts);
   return {
@@ -262,8 +199,13 @@ export function secureInboundMessage(
   if (!isSenderAllowed(sender, policy.allowedSenders)) {
     return { ok: false, reason: "sender_not_allowed" };
   }
-  const subject = sanitizeContent(input.subject, MAX_SUBJECT_LENGTH, policy.allowedUrlHosts);
-  const body = sanitizeContent(input.body, MAX_BODY_LENGTH, policy.allowedUrlHosts);
+  const subject = sanitizeInbound(input.subject, MAX_SUBJECT_LENGTH, policy.allowedUrlHosts, false);
+  const body = sanitizeInbound(
+    input.body,
+    MAX_BODY_LENGTH,
+    policy.allowedUrlHosts,
+    input.bodyIsHtml,
+  );
   if (subject.text.length === 0 && body.text.length === 0) {
     return { ok: false, reason: "empty_content" };
   }
@@ -273,20 +215,25 @@ export function secureInboundMessage(
       sender,
       subject: subject.text,
       body: body.text,
-      removedInstructionLines:
-        subject.removedInstructionLines + body.removedInstructionLines,
+      removedInstructionLines: subject.removedInstructionLines + body.removedInstructionLines,
       removedUrls: subject.removedUrls + body.removedUrls,
     },
   };
 }
 
+/**
+ * Outbound drafts get a narrower pass than inbound mail. The instruction
+ * patterns exist to spot an attacker steering the model; running them over the
+ * model's own reply rejects ordinary support prose ("click the link in your
+ * welcome email"). Here we only enforce the URL allowlist and strip control
+ * characters, and we preserve the draft's line structure for the recipient.
+ */
 export function secureGeneratedReply(
   draft: string,
   allowedUrlHosts: readonly string[],
 ): { readonly safe: boolean; readonly text: string } {
-  const result = sanitizeContent(draft, 4_000, allowedUrlHosts);
-  return {
-    safe: result.text.length > 0 && result.removedInstructionLines === 0,
-    text: result.text,
-  };
+  const cleaned = draft.replace(DANGEROUS_CHARS_REGEX, "");
+  const urls = rewriteUrls(cleaned, allowedUrlHosts);
+  const text = truncate(urls.text.trim(), MAX_DRAFT_LENGTH);
+  return { safe: text.length > 0 && urls.removed === 0, text };
 }

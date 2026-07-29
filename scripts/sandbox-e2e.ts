@@ -5,7 +5,7 @@ const env = z
   .object({
     SHIPMAIL_API_KEY: z.string().min(1),
     SHIPMAIL_MAILBOX_ID: z.string().min(1),
-    SANDBOX_FROM: z.string().email().default("sandbox-sender@example.com"),
+    SANDBOX_FROM: z.email().default("sandbox-sender@example.com"),
   })
   .parse(process.env);
 

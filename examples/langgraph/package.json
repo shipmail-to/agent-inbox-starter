@@ -6,9 +6,9 @@
     "start": "bun index.ts"
   },
   "dependencies": {
-    "@langchain/anthropic": "latest",
-    "@langchain/langgraph": "latest",
-    "@langchain/core": "latest",
-    "zod": "latest"
+    "@langchain/anthropic": "^1.5.2",
+    "@langchain/langgraph": "^1.4.8",
+    "@langchain/core": "^1.2.3",
+    "zod": "^4.4.3"
   }
 }

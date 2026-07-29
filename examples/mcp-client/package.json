@@ -6,6 +6,6 @@
     "start": "bun index.ts"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "latest"
+    "@modelcontextprotocol/sdk": "^1.30.0"
   }
 }

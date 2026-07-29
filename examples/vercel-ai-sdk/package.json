@@ -6,8 +6,8 @@
     "start": "bun index.ts"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "latest",
-    "ai": "latest",
-    "zod": "latest"
+    "@ai-sdk/anthropic": "^4.0.24",
+    "ai": "^7.0.42",
+    "zod": "^4.4.3"
   }
 }

@@ -9,7 +9,6 @@
   },
   "homepage": "https://github.com/shipmail-to/agent-inbox-starter",
   "type": "module",
-  "files": ["api", "src", "scripts", "examples", ".env.example", "LICENSE", "README.md", "tsconfig.json"],
   "scripts": {
     "dev": "bun --watch src/index.ts",
     "start": "bun src/index.ts",

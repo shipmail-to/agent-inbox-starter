@@ -1,20 +1,34 @@
 import { z } from "zod";
 
-const csvSchema = z.string().transform((value) =>
-  value
+// Domains where a *@domain allowlist entry would let anyone with a free account
+// through, which defeats the point of allowlisting.
+const PUBLIC_MAIL_DOMAINS: readonly string[] = [
+  "gmail.com",
+  "googlemail.com",
+  "outlook.com",
+  "hotmail.com",
+  "live.com",
+  "yahoo.com",
+  "icloud.com",
+  "me.com",
+  "aol.com",
+  "proton.me",
+  "protonmail.com",
+  "gmx.com",
+  "yandex.com",
+  "mail.com",
+];
+
+function parseCsv(value: string): string[] {
+  return value
     .split(",")
     .map((item) => item.trim().toLowerCase())
-    .filter((item) => item.length > 0),
-);
-const optionalCsvSchema = z
-  .string()
-  .default("")
-  .transform((value) =>
-    value
-      .split(",")
-      .map((item) => item.trim().toLowerCase())
-      .filter((item) => item.length > 0),
-  );
+    .filter((item) => item.length > 0);
+}
+
+const csvSchema = z.string().transform(parseCsv);
+const optionalCsvSchema = z.string().default("").transform(parseCsv);
+
 const envSchema = z.object({
   SHIPMAIL_API_KEY: z.string().min(1),
   SHIPMAIL_MAILBOX_ID: z.string().min(1),
@@ -29,6 +43,7 @@ const envSchema = z.object({
     .transform((value) => value === "true"),
   REQUIRE_AUTHENTICATED_SENDER: z.enum(["true", "false"]).optional(),
 });
+
 export type AppConfig = {
   readonly shipmailApiKey: string;
   readonly mailboxId: string;
@@ -40,8 +55,21 @@ export type AppConfig = {
   readonly autoSend: boolean;
   readonly requireAuthenticatedSender: boolean;
 };
+
+function assertUsableAllowlist(entries: readonly string[]): void {
+  const publicWildcards = entries.filter(
+    (entry) => entry.startsWith("*@") && PUBLIC_MAIL_DOMAINS.includes(entry.slice(2)),
+  );
+  if (publicWildcards.length > 0) {
+    throw new Error(
+      `SHIPMAIL_ALLOWED_SENDERS cannot use a wildcard for a public mail provider (${publicWildcards.join(", ")}). List individual addresses instead.`,
+    );
+  }
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const parsed = envSchema.parse(env);
+  assertUsableAllowlist(parsed.SHIPMAIL_ALLOWED_SENDERS);
   return {
     shipmailApiKey: parsed.SHIPMAIL_API_KEY,
     mailboxId: parsed.SHIPMAIL_MAILBOX_ID,
@@ -51,6 +79,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     allowedSenders: parsed.SHIPMAIL_ALLOWED_SENDERS,
     allowedUrlHosts: parsed.SHIPMAIL_ALLOWED_URL_HOSTS,
     autoSend: parsed.AUTO_SEND,
+    // Defaults on whenever AUTO_SEND is on: an unauthenticated sender that can
+    // trigger an outbound reply is the case that actually matters.
     requireAuthenticatedSender:
       parsed.REQUIRE_AUTHENTICATED_SENDER === undefined
         ? parsed.AUTO_SEND
