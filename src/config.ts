@@ -35,6 +35,7 @@ const envSchema = z.object({
   SHIPMAIL_WEBHOOK_SECRET: z.string().min(1),
   ANTHROPIC_API_KEY: z.string().min(1),
   PORT: z.coerce.number().int().min(1).max(65_535).default(3000),
+  REDIS_URL: z.string().min(1).optional(),
   SHIPMAIL_ALLOWED_SENDERS: csvSchema.pipe(z.array(z.string()).min(1)),
   SHIPMAIL_ALLOWED_URL_HOSTS: optionalCsvSchema,
   AUTO_SEND: z
@@ -50,6 +51,7 @@ export type AppConfig = {
   readonly webhookSecret: string;
   readonly anthropicApiKey: string;
   readonly port: number;
+  readonly redisUrl: string | undefined;
   readonly allowedSenders: readonly string[];
   readonly allowedUrlHosts: readonly string[];
   readonly autoSend: boolean;
@@ -76,6 +78,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     webhookSecret: parsed.SHIPMAIL_WEBHOOK_SECRET,
     anthropicApiKey: parsed.ANTHROPIC_API_KEY,
     port: parsed.PORT,
+    redisUrl: parsed.REDIS_URL,
     allowedSenders: parsed.SHIPMAIL_ALLOWED_SENDERS,
     allowedUrlHosts: parsed.SHIPMAIL_ALLOWED_URL_HOSTS,
     autoSend: parsed.AUTO_SEND,

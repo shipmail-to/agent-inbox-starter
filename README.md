@@ -80,6 +80,7 @@ The health endpoint is `GET /health`.
 | `SHIPMAIL_WEBHOOK_SECRET` | Signing secret returned when the webhook is created |
 | `ANTHROPIC_API_KEY` | Anthropic API key |
 | `PORT` | Local HTTP port, defaults to `3000` |
+| `REDIS_URL` | Optional. Shared deduplication store. Required if you run more than one instance |
 | `SHIPMAIL_ALLOWED_SENDERS` | Required comma-separated addresses or entries like `*@example.com`. Wildcards for public mail providers are rejected at startup |
 | `SHIPMAIL_ALLOWED_URL_HOSTS` | Optional exact hosts or entries like `*.example.com` |
 | `AUTO_SEND` | Sends generated drafts when `true`. Defaults to `false` |
@@ -128,9 +129,10 @@ With that said, the controls that do hold:
 
 - **Attachments are not handled at all.** Nothing in `src/` reads them. If you add attachment
   processing, you own zip bombs, XXE, macro documents, and text embedded in images and PDFs.
-- **Multi-process deployments need a shared store.** The default `EventStore` is an in-memory map,
-  which is correct for one process. Two instances with separate maps will both process the same
-  retry. Swap in Redis or Postgres before scaling out.
+- **Multi-process deployments need `REDIS_URL`.** Without it the `EventStore` is an in-memory map,
+  which is correct for one process only: two instances keep separate maps and both process the same
+  retry. Set `REDIS_URL` and deduplication becomes shared. The process logs a warning at startup
+  when it is unset, so this is visible rather than silent.
 - **Rate limiting and cost.** There is no per-sender rate limit. An allowlisted sender can drive
   model spend.
 - **Log retention.** Decisions are logged with the sender address and the classification. Message
@@ -167,10 +169,14 @@ real Shipmail API key.
 ## Deploy
 
 This runs as a long-lived process, which is what the shape needs: the webhook
-acknowledges immediately and finishes the work on a background queue, and the
-deduplication store lives in memory by default. A serverless function has nowhere to
-keep either, so use anything that runs a container or a persistent process. Railway
-is used below as an example; Fly, Render, and a plain Docker host work the same way.
+acknowledges immediately and finishes the work on a background queue. A serverless
+function has nowhere to keep that queue, so use anything that runs a container or a
+persistent process. Railway is used below as an example; Fly, Render, and a plain
+Docker host work the same way.
+
+Running a single instance needs nothing else. To run more than one, add a Redis
+instance and set `REDIS_URL`, which moves deduplication and the per-thread reply cap
+into shared state.
 
 Create a service from this repository, add the environment variables from `.env.example`, and use:
 
@@ -182,9 +188,9 @@ bun run start
 Railway supplies `PORT`, which the starter reads. Set the health check to `/health`, then create the
 Shipmail webhook at `https://your-service.example/webhook`.
 
-If you do need to run this on a serverless platform, the in-memory `EventStore` is the
-first thing to replace: a function that is frozen between invocations cannot remember
-which events it has already handled, so every retry would be reprocessed.
+A serverless platform additionally needs `REDIS_URL`, not just for multiple instances:
+a function frozen between invocations cannot remember which events it already handled,
+so every retry would be reprocessed.
 
 ## Extending it
 
@@ -192,7 +198,9 @@ which events it has already handled, so every retry would be reprocessed.
   Nothing else changes. Both examples in `examples/` do exactly this, against the same prompt and
   schema the built-in Anthropic model uses.
 - **Route escalations somewhere.** Pass `onEscalate` to send them to Slack, a ticket, or a queue.
-- **Replace the event store.** Implement `EventStore` from `src/event-store.ts`.
+- **Replace the event store.** Set `REDIS_URL` to use the Redis implementation, or implement
+  `EventStore` from `src/event-store.ts` against something else. `createRedisEventStore` takes any
+  client exposing `send(command, args)`, so Bun's built-in client, ioredis, and node-redis all work.
 
 ## Examples
 
