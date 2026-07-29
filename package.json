@@ -17,12 +17,12 @@
     "sandbox:e2e": "bun scripts/sandbox-e2e.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.100.0",
+    "@anthropic-ai/sdk": "^0.115.0",
     "shipmail": "^0.4.6",
     "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/bun": "^1.3.10",
-    "typescript": "^5.9.3"
+    "typescript": "^7.0.2"
   }
 }
