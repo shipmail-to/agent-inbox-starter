@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "shipmail": {
+      "command": "npx",
+      "args": ["-y", "shipmail-mcp"],
+      "env": {
+        "SHIPMAIL_API_KEY": "replace-with-your-shipmail-api-key"
+      }
+    }
+  }
+}

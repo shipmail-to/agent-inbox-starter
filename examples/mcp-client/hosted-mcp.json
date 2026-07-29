@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "shipmail": {
+      "url": "https://shipmail.to/api/mcp",
+      "headers": {
+        "Authorization": "Bearer replace-with-your-shipmail-api-key"
+      }
+    }
+  }
+}
