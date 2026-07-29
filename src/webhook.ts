@@ -46,8 +46,9 @@ const messageReceivedSchema = z.looseObject({
 
 type MessageReceivedEvent = z.infer<typeof messageReceivedSchema>;
 
-// shipmail 0.4.6 does not declare authentication_results on inbox_message_full,
-// so read it through a schema rather than widening the SDK type by assertion.
+// The SDK does not declare authentication_results on inbox_message_full, though
+// the API returns it. Read it through a schema rather than widening the SDK type
+// by assertion, so a payload that does not match is treated as absent.
 const authenticationCarrierSchema = z.looseObject({ authentication_results: z.unknown() });
 
 function readAuthenticationResults(message: InboxFullMessage): ReturnType<

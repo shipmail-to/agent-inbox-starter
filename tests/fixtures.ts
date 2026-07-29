@@ -21,7 +21,7 @@ type MessageOptions = {
   readonly auth?: EmailAuthenticationResults | null | undefined;
 };
 
-/** shipmail 0.4.6 does not declare authentication_results, so widen the fixture type. */
+/** The SDK does not declare authentication_results, so widen the fixture type. */
 export type ThreadMessageFixture = InboxFullMessage & {
   readonly authentication_results?: EmailAuthenticationResults | null;
 };
