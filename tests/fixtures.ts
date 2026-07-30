@@ -21,10 +21,7 @@ type MessageOptions = {
   readonly auth?: EmailAuthenticationResults | null | undefined;
 };
 
-/** The SDK does not declare authentication_results, so widen the fixture type. */
-export type ThreadMessageFixture = InboxFullMessage & {
-  readonly authentication_results?: EmailAuthenticationResults | null;
-};
+export type ThreadMessageFixture = InboxFullMessage;
 
 export function authenticationResults(
   spf: EmailAuthVerdict,
@@ -67,7 +64,7 @@ export function message(options: MessageOptions): ThreadMessageFixture {
     text_body: hasText ? [{ part_id: "part", type: "text/plain" }] : [],
     html_body: hasText ? [] : [{ part_id: "part", type: "text/html" }],
     attachments: [],
-    ...(options.auth === undefined ? {} : { authentication_results: options.auth }),
+    authentication_results: options.auth ?? null,
   };
 }
 
