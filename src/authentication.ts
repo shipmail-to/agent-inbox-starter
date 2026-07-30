@@ -1,11 +1,12 @@
+import type { EmailAuthenticationResults, EmailAuthVerdict } from "shipmail";
 import { z } from "zod";
 
 /**
  * Sender authentication verdicts as Shipmail reports them on an inbox message.
  *
- * The shape mirrors the `authentication_results` field on `inbox_message_full`.
- * The SDK does not declare it yet, so it is declared here and parsed defensively:
- * a payload that does not match is treated as absent rather than trusted.
+ * The types come from the SDK. They are still parsed defensively here because
+ * this decides whether a message reaches the model, so a payload that does not
+ * match the declared shape is treated as absent rather than trusted.
  */
 export const EMAIL_AUTH_VERDICTS = [
   "pass",
@@ -17,23 +18,7 @@ export const EMAIL_AUTH_VERDICTS = [
   "permerror",
   "policy",
   "unknown",
-] as const;
-export type EmailAuthVerdict = (typeof EMAIL_AUTH_VERDICTS)[number];
-
-export type EmailAuthenticationResults = {
-  readonly spf: EmailAuthVerdict;
-  readonly dkim: EmailAuthVerdict;
-  readonly dmarc: EmailAuthVerdict;
-  readonly spam: {
-    readonly isSpam: boolean | null;
-    readonly scoreMilli: number | null;
-  };
-  readonly raw: {
-    readonly authenticationResults: string | null;
-    readonly receivedSpf: string | null;
-    readonly spamStatus: string | null;
-  };
-};
+] as const satisfies readonly EmailAuthVerdict[];
 
 // Typed against EmailAuthenticationResults so the schema cannot drift from the type.
 const authenticationResultsSchema: z.ZodType<EmailAuthenticationResults> = z.object({
@@ -60,3 +45,5 @@ export function parseAuthenticationResults(value: unknown): EmailAuthenticationR
   const parsed = authenticationResultsSchema.safeParse(value);
   return parsed.success ? parsed.data : null;
 }
+
+export type { EmailAuthenticationResults, EmailAuthVerdict };
