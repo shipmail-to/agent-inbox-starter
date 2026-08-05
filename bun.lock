@@ -6,7 +6,7 @@
       "name": "shipmail-agent-inbox-starter",
       "dependencies": {
         "@anthropic-ai/sdk": "^0.115.0",
-        "shipmail": "^0.4.12",
+        "shipmail": "^0.4.14",
         "zod": "^4.3.6",
       },
       "devDependencies": {
@@ -72,7 +72,7 @@
 
     "json-schema-to-ts": ["json-schema-to-ts@3.1.1", "", { "dependencies": { "@babel/runtime": "^7.18.3", "ts-algebra": "^2.0.0" } }, "sha512-+DWg8jCJG2TEnpy7kOm/7/AxaYoaRbjVB4LFZLySZlWn8exGs3A4OLJR966cVvU26N7X9TWxl+Jsw7dzAqKT6g=="],
 
-    "shipmail": ["shipmail@0.4.12", "", {}, "sha512-CtyFpLZjAU72ewRwK+64tAbn1hYoDFXA6FU0M0C1D/6ehAzZr8IB6CT5rQL821jMO+pTxT5X39L305X/cj3ofA=="],
+    "shipmail": ["shipmail@0.4.14", "", {}, "sha512-/7UTictfWwDOm54W1lhqwBqsht9sFvCsDu0/bi50PSeMOPGWxVI/VtmQ1sNMEY9PkbEAM/ve7UKvmmnQuu1x3w=="],
 
     "standardwebhooks": ["standardwebhooks@1.0.0", "", { "dependencies": { "@stablelib/base64": "^1.0.0", "fast-sha256": "^1.3.0" } }, "sha512-BbHGOQK9olHPMvQNHWul6MYlrRTAOKn03rOe4A8O3CLWhNf4YHBqq2HJKKC+sfqpxiBY52pNeesD6jIiLDz8jg=="],
 
