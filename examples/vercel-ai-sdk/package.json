@@ -8,6 +8,6 @@
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.24",
     "ai": "^7.0.42",
-    "zod": "^4.4.3"
+    "zod": "^4.6.6"
   }
 }
