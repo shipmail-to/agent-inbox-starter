@@ -10,6 +10,7 @@ export const MAX_WEBHOOK_BODY_BYTES = 1024 * 1024;
 const DEFAULT_MAX_CONCURRENCY = 4;
 const DEFAULT_MAX_QUEUE_DEPTH = 64;
 const DEFAULT_PROCESS_TIMEOUT_MS = 60_000;
+const DEFAULT_RETRY_DELAYS_MS: readonly number[] = [5_000, 30_000];
 
 export type Logger = Pick<Console, "info" | "warn" | "error">;
 
@@ -58,6 +59,9 @@ export type WebhookServerOptions = {
   readonly maxConcurrency?: number | undefined;
   readonly maxQueueDepth?: number | undefined;
   readonly processTimeoutMs?: number | undefined;
+  /** Waits between attempts of a failed event. Its length is the number of retries. */
+  readonly retryDelaysMs?: readonly number[] | undefined;
+  readonly sleep?: ((ms: number) => Promise<void>) | undefined;
   /**
    * Test-only override for signature verification. Refused when NODE_ENV is
    * "production" so it cannot silently disable the check in a deployment.
@@ -137,40 +141,73 @@ export function createWebhookHandler(options: WebhookServerOptions): WebhookHand
   const maxConcurrency = options.maxConcurrency ?? DEFAULT_MAX_CONCURRENCY;
   const maxQueueDepth = options.maxQueueDepth ?? DEFAULT_MAX_QUEUE_DEPTH;
   const timeoutMs = options.processTimeoutMs ?? DEFAULT_PROCESS_TIMEOUT_MS;
-  const inFlight = new Set<Promise<void>>();
-  let queued = 0;
+  const retryDelaysMs = options.retryDelaysMs ?? DEFAULT_RETRY_DELAYS_MS;
+  const sleep = options.sleep ?? ((ms: number) => Bun.sleep(ms));
+  const pending = new Set<Promise<void>>();
+  const waiting: (() => void)[] = [];
+  let running = 0;
 
+  async function acquireSlot(): Promise<void> {
+    if (running < maxConcurrency) {
+      running += 1;
+      return;
+    }
+    // The slot is handed over by releaseSlot, so running never drops below the limit.
+    await new Promise<void>((resolve) => waiting.push(resolve));
+  }
+
+  function releaseSlot(): void {
+    const next = waiting.shift();
+    if (next === undefined) running -= 1;
+    else next();
+  }
+
+  /**
+   * Shipmail has already received its 202, so it will not redeliver: a
+   * retryable failure is retried here. After the last attempt the claim is
+   * released, so replaying the delivery from Shipmail processes it again.
+   */
   async function runTask(eventId: string, task: () => Promise<void>): Promise<void> {
-    try {
-      await withTimeout(task(), timeoutMs);
-    } catch (error) {
-      if (error instanceof TerminalEventError) {
-        logger.error("Dropping event: permanent failure", { eventId, error: errorMessage(error) });
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        await withTimeout(task(), timeoutMs);
         return;
+      } catch (error) {
+        if (error instanceof TerminalEventError) {
+          logger.error("Dropping event: permanent failure", {
+            eventId,
+            error: errorMessage(error),
+          });
+          return;
+        }
+        const delay = retryDelaysMs[attempt];
+        if (delay === undefined) {
+          logger.error("Event failed after every retry; replay it from Shipmail", {
+            eventId,
+            error: errorMessage(error),
+          });
+          await store.release(eventId);
+          return;
+        }
+        logger.warn("Event failed; retrying", { eventId, attempt, error: errorMessage(error) });
+        await sleep(delay);
       }
-      // Retryable. Release the claim so the provider's next delivery reprocesses it.
-      logger.error("Webhook processing failed; awaiting provider retry", {
-        eventId,
-        error: errorMessage(error),
-      });
-      await store.release(eventId);
     }
   }
 
   function enqueue(eventId: string, task: () => Promise<void>): void {
-    queued += 1;
     const work = (async () => {
-      while (inFlight.size >= maxConcurrency) {
-        await Promise.race(inFlight);
+      await acquireSlot();
+      try {
+        await runTask(eventId, task);
+      } finally {
+        releaseSlot();
       }
-      await runTask(eventId, task);
-    })().finally(() => {
-      queued -= 1;
-    });
+    })();
     const tracked = work.finally(() => {
-      inFlight.delete(tracked);
+      pending.delete(tracked);
     });
-    inFlight.add(tracked);
+    pending.add(tracked);
   }
 
   async function handle(request: Request): Promise<Response> {
@@ -229,9 +266,12 @@ export function createWebhookHandler(options: WebhookServerOptions): WebhookHand
       logger.info("Ignored a duplicate delivery", { eventId: envelope.event_id });
       return responseJson(202, { accepted: true, ignored: true });
     }
-    if (queued >= maxQueueDepth) {
+    if (pending.size >= maxQueueDepth) {
       await store.release(envelope.event_id);
-      logger.warn("Shedding load: work queue is full", { eventId: envelope.event_id, queued });
+      logger.warn("Shedding load: work queue is full", {
+        eventId: envelope.event_id,
+        pending: pending.size,
+      });
       return responseJson(503, { error: "queue_full" });
     }
 
@@ -245,8 +285,8 @@ export function createWebhookHandler(options: WebhookServerOptions): WebhookHand
   }
 
   async function drain(): Promise<void> {
-    while (inFlight.size > 0) {
-      await Promise.race(inFlight);
+    while (pending.size > 0) {
+      await Promise.race(pending);
     }
   }
 

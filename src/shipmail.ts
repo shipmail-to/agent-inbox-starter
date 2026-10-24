@@ -2,6 +2,7 @@ import type {
   BookingLink,
   CalendarEvent,
   InboxReplyDraftSend,
+  InboxThreads,
   InboxThreadSummary,
   InboxReplyDraftWrite,
   InboxThreadAttentionResult,
@@ -50,7 +51,7 @@ export type ThreadSummary = Pick<
 export type ThreadListApi = {
   readonly listInboxThreads: Call<
     Mailboxes["listInboxThreads"],
-    { readonly data: readonly ThreadSummary[] }
+    { readonly data: readonly ThreadSummary[]; readonly summary: InboxThreads["summary"] }
   >;
 };
 

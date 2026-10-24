@@ -9,6 +9,7 @@ import type { CalendarApi, InboxSearchApi, SendApi } from "../../src/shipmail.ts
 const MAX_ATTENDEES = 5;
 const MESSAGES_PER_ATTENDEE = 5;
 const MAX_EXCERPT_LENGTH = 1_500;
+const HELD = "[held by Shipmail's security scan]";
 
 const briefSchema = z
   .object({
@@ -55,22 +56,28 @@ export async function sendMeetingBrief(
 
   const history = await Promise.all(
     attendees.map(async (attendee) => {
+      const address = attendee.email.toLowerCase();
       const found = await options.inbox.listInboxMessages(event.mailbox_id, {
-        from: attendee.email,
+        from: address,
         limit: MESSAGES_PER_ATTENDEE,
       });
+      // The list filter matches names and substrings, so keep exact sender matches only.
+      const fromAttendee = found.data.filter((message) =>
+        message.from?.some((from) => from.email?.toLowerCase() === address),
+      );
       return {
         attendee: attendee.email,
         name: attendee.name,
-        // Held messages are named but not quoted, so flagged content never reaches the model.
-        emails: found.data.map((message) => ({
-          subject: message.subject,
-          received_at: message.received_at,
-          body:
-            securityHold(message.security) === null
-              ? (message.reply_text ?? "").slice(0, MAX_EXCERPT_LENGTH)
-              : "[held by Shipmail's security scan]",
-        })),
+        // Held messages are counted but not quoted, so flagged content never reaches the model.
+        emails: fromAttendee.map((message) =>
+          securityHold(message.security) === null
+            ? {
+                subject: message.subject,
+                received_at: message.received_at,
+                body: (message.reply_text ?? "").slice(0, MAX_EXCERPT_LENGTH),
+              }
+            : { subject: null, received_at: message.received_at, body: HELD },
+        ),
       };
     }),
   );

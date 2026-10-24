@@ -37,87 +37,110 @@ export type DigestOptions = {
 
 type WaitingConversation = {
   readonly summary: ThreadSummary;
-  readonly excerpt: string;
+  /** Null when Shipmail's scan holds the latest message, so neither subject nor body is quoted. */
+  readonly excerpt: string | null;
 };
 
-async function waitingConversations(options: DigestOptions): Promise<WaitingConversation[]> {
+type Waiting = { readonly conversations: WaitingConversation[]; readonly omitted: number };
+
+const STATES = ["needs_reply", "follow_up_due"] as const;
+
+async function waitingConversations(options: DigestOptions): Promise<Waiting> {
   const pages = await Promise.all(
-    (["needs_reply", "follow_up_due"] as const).map((attention_state) =>
-      options.inbox.listInboxThreads(options.mailboxId, {
+    STATES.map(async (attention_state) => {
+      const page = await options.inbox.listInboxThreads(options.mailboxId, {
         attention_state,
         sort_by: "attention_since",
         order: "asc",
         limit: PER_STATE_LIMIT,
-      }),
-    ),
-  );
-  const summaries = pages.flatMap((page) => page.data);
-  return Promise.all(
-    summaries.map(async (summary) => {
-      const thread = await options.inbox.getInboxThread(options.mailboxId, summary.conversation_id);
-      const latest =
-        thread.data.find((message) => message.id === summary.latest_inbound_email_id) ??
-        thread.data.at(-1);
-      const excerpt =
-        latest === undefined
-          ? ""
-          : securityHold(latest.security) === null
-            ? (latest.reply_text ?? "").slice(0, MAX_EXCERPT_LENGTH)
-            : "[held by Shipmail's security scan]";
-      return { summary, excerpt };
+      });
+      return { page, omitted: Math.max(0, page.summary[attention_state] - page.data.length) };
     }),
   );
+  const conversations = await Promise.all(
+    pages
+      .flatMap(({ page }) => page.data)
+      .map(async (summary) => {
+        const thread = await options.inbox.getInboxThread(
+          options.mailboxId,
+          summary.conversation_id,
+        );
+        const latest =
+          thread.data.find((message) => message.id === summary.latest_inbound_email_id) ??
+          thread.data.at(-1);
+        const excerpt =
+          latest === undefined
+            ? ""
+            : securityHold(latest.security) === null
+              ? (latest.reply_text ?? "").slice(0, MAX_EXCERPT_LENGTH)
+              : null;
+        return { summary, excerpt };
+      }),
+  );
+  return { conversations, omitted: pages.reduce((total, { omitted }) => total + omitted, 0) };
 }
 
 export function formatDigest(
-  conversations: readonly WaitingConversation[],
+  waiting: Waiting,
   items: z.infer<typeof digestSchema>["items"],
 ): string {
   const byId = new Map(items.map((item) => [item.conversation_id, item]));
-  const sections = conversations.map(({ summary }) => {
-    const item = byId.get(summary.conversation_id);
+  const sections = waiting.conversations.map(({ summary, excerpt }) => {
+    const item = excerpt === null ? undefined : byId.get(summary.conversation_id);
     const label = summary.attention_state === "follow_up_due" ? "Follow-up due" : "Needs a reply";
     const lines = [
       `${label}: ${summary.subject ?? "(no subject)"}`,
       `From ${summary.latest_from_address ?? "unknown sender"}`,
+      excerpt === null ? "Held by Shipmail's security scan. Review it in Shipmail." : null,
       item === undefined ? null : item.summary,
       item === undefined ? null : `Next: ${item.suggested_action}`,
     ];
     return lines.filter((line) => line !== null).join("\n");
   });
+  if (waiting.omitted > 0) {
+    sections.push(
+      `${waiting.omitted} more not listed here. Open the inbox in Shipmail to see them.`,
+    );
+  }
   // Subjects and summaries derive from inbound mail, so links are removed.
   return secureGeneratedReply(sections.join("\n\n"), [], 20_000).text;
 }
 
-/** Sends one digest of every conversation waiting on the owner. Returns how many it listed. */
+/** Sends one digest of the conversations waiting on the owner. Returns how many are waiting. */
 export async function sendMorningDigest(options: DigestOptions): Promise<number> {
-  const conversations = await waitingConversations(options);
-  if (conversations.length === 0) return 0;
+  const waiting = await waitingConversations(options);
+  const total = waiting.conversations.length + waiting.omitted;
+  if (total === 0) return 0;
 
-  const { items } = await options.model.generate({
-    system: DIGEST_SYSTEM_PROMPT,
-    prompt: untrustedBlock(
-      "conversation data",
-      conversations.map(({ summary, excerpt }) => ({
-        conversation_id: summary.conversation_id,
-        subject: summary.subject,
-        from: summary.latest_from_address,
-        waiting_since: summary.attention_since,
-        latest_message: excerpt,
-      })),
-    ),
-    schema: digestSchema,
-  });
+  const quotable = waiting.conversations.filter(({ excerpt }) => excerpt !== null);
+  const { items } =
+    quotable.length === 0
+      ? { items: [] }
+      : await options.model.generate({
+          system: DIGEST_SYSTEM_PROMPT,
+          prompt: untrustedBlock(
+            "conversation data",
+            quotable.map(({ summary, excerpt }) => ({
+              conversation_id: summary.conversation_id,
+              subject: summary.subject,
+              from: summary.latest_from_address,
+              waiting_since: summary.attention_since,
+              latest_message: excerpt,
+            })),
+          ),
+          schema: digestSchema,
+        });
 
   const date = (options.now?.() ?? new Date()).toISOString().slice(0, 10);
   await options.messages.send(
     {
       mailbox_id: options.mailboxId,
       to: [options.digestTo],
-      subject: `${conversations.length} conversations waiting on you`,
-      text: formatDigest(conversations, items),
+      subject:
+        total === 1 ? "1 conversation waiting on you" : `${total} conversations waiting on you`,
+      text: formatDigest(waiting, items),
     },
     { idempotencyKey: `agent-inbox-digest:${options.mailboxId}:${date}` },
   );
-  return conversations.length;
+  return total;
 }

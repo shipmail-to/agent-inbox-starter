@@ -1,20 +1,31 @@
 import { ShipmailClient } from "shipmail";
 import { z } from "zod";
 
-import { loadConfig } from "../../src/config.ts";
+import { blankAsUnset, loadConfig } from "../../src/config.ts";
 import { eventStoreFromUrl } from "../../src/event-store-redis.ts";
 import { createAnthropicModel } from "../../src/model.ts";
 import { startWebhookServer } from "../../src/server.ts";
 import { triageHandler } from "../../src/triage.ts";
 import { bookingHost, SCHEDULING_POLICY, schedulingContext } from "./scheduling.ts";
 
+function isTimeZone(zone: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en", { timeZone: zone });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 const config = loadConfig();
 const scheduling = z
   .object({
-    SCHEDULING_TIMEZONE: z.string().min(1).default("UTC"),
-    MEETING_MINUTES: z.coerce.number().int().min(5).max(480).default(30),
-    SCHEDULING_DAYS: z.coerce.number().int().min(1).max(30).default(7),
-    BOOKING_LINK_ID: z.string().min(1).optional(),
+    SCHEDULING_TIMEZONE: blankAsUnset(
+      z.string().default("UTC").refine(isTimeZone, { message: "Unknown time zone" }),
+    ),
+    MEETING_MINUTES: blankAsUnset(z.coerce.number().int().min(5).max(480).default(30)),
+    SCHEDULING_DAYS: blankAsUnset(z.coerce.number().int().min(1).max(30).default(7)),
+    BOOKING_LINK_ID: blankAsUnset(z.string().optional()),
   })
   .parse(process.env);
 

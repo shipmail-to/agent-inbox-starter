@@ -163,6 +163,11 @@ await new ShipmailClient(adminKey).mailboxes.update(mailboxId, { agent_security_
 
 - **Attachments are not handled at all.** Nothing here reads them. If you add attachment
   processing, you own zip bombs, XXE, macro documents, and text embedded in images and PDFs.
+- **The work queue is in memory.** Shipmail gets its `202` before the work runs, so it does not
+  redeliver a failed event. The server retries a failed event twice, after 5 and 30 seconds, then
+  logs its event ID and releases it, so you can replay the delivery from Shipmail. A crash or a
+  deploy loses the events still in the queue. Put a durable queue behind the handlers if that
+  matters.
 - **Multi-process deployments need `REDIS_URL`.** Without it the `EventStore` is an in-memory map,
   correct for one process only. The process warns at startup when it is unset.
 - **Rate limiting and cost.** There is no per-sender rate limit. An allowlisted sender, or anyone

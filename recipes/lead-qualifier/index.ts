@@ -1,7 +1,7 @@
 import { ShipmailClient } from "shipmail";
 import { z } from "zod";
 
-import { webhookEnvSchema } from "../../src/config.ts";
+import { blankAsUnset, webhookEnvSchema } from "../../src/config.ts";
 import { eventStoreFromUrl } from "../../src/event-store-redis.ts";
 import { createAnthropicModel } from "../../src/model.ts";
 import { startWebhookServer } from "../../src/server.ts";
@@ -10,7 +10,7 @@ import { leadHandler, postTo } from "./qualifier.ts";
 const env = webhookEnvSchema
   .extend({
     CRM_WEBHOOK_URL: z.url({ protocol: /^https$/ }),
-    CRM_WEBHOOK_TOKEN: z.string().min(1).optional(),
+    CRM_WEBHOOK_TOKEN: blankAsUnset(z.string().optional()),
   })
   .parse(process.env);
 const shipmail = new ShipmailClient(env.SHIPMAIL_API_KEY);

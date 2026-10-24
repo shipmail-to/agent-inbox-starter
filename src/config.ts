@@ -28,6 +28,11 @@ function parseCsv(value: string): string[] {
     .filter((item) => item.length > 0);
 }
 
+/** An empty value, as copied from .env.example or set in a dashboard, means unset. */
+export function blankAsUnset<T extends z.ZodType>(schema: T) {
+  return z.preprocess((value) => (value === "" ? undefined : value), schema);
+}
+
 const csvSchema = z.string().transform(parseCsv);
 export const optionalCsvSchema = z.string().default("").transform(parseCsv);
 
@@ -43,11 +48,7 @@ export const recipeEnvSchema = z.object({
 export const webhookEnvSchema = recipeEnvSchema.extend({
   SHIPMAIL_WEBHOOK_SECRET: z.string().min(1),
   PORT: z.coerce.number().int().min(1).max(65_535).default(3000),
-  // An empty value, as copied from .env.example or set in a dashboard, means unset.
-  REDIS_URL: z
-    .string()
-    .optional()
-    .transform((value) => (value === "" ? undefined : value)),
+  REDIS_URL: blankAsUnset(z.string().optional()),
 });
 
 const envSchema = webhookEnvSchema.extend({

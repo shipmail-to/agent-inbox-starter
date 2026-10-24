@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { z } from "zod";
 
 import { createMemoryEventStore } from "../src/event-store.ts";
+import { messageReceivedSchema } from "../src/events.ts";
 import {
   createWebhookHandler,
   MAX_WEBHOOK_BODY_BYTES,
@@ -82,6 +83,16 @@ describe("webhook server", () => {
     expect(runs).toBe(0);
   });
 
+  test("accepts a valid sender address that a strict email regex would reject", () => {
+    const data = messageReceivedSchema.safeParse({
+      tracked_message_id: "msg_1",
+      mailbox_id: "mbx_1",
+      from: { address: "info=sales@acme.example", name: null },
+      thread_id: "thread_1",
+    });
+    expect(data.success).toBe(true);
+  });
+
   test("rejects data that does not match the handler's schema", async () => {
     const handler = server(envelope("evt_4", "message.received", { value: 1 }), async () => {});
     const response = await handler.handle(webhookRequest({}));
@@ -101,17 +112,61 @@ describe("webhook server", () => {
     expect(runs).toBe(1);
   });
 
-  test("releases the claim after a retryable failure so the retry runs", async () => {
+  test("retries a failed event in process, because Shipmail already got its 202", async () => {
     let runs = 0;
-    const handler = server(ping("evt_6"), async () => {
-      runs += 1;
-      if (runs === 1) throw new Error("model overloaded");
-    });
+    const handler = server(
+      ping("evt_6"),
+      async () => {
+        runs += 1;
+        if (runs === 1) throw new Error("model overloaded");
+      },
+      { sleep: async () => {} },
+    );
+    await handler.handle(webhookRequest({}));
+    await handler.drain();
+    expect(runs).toBe(2);
+  });
+
+  test("releases the claim after the last retry so a replay from Shipmail runs", async () => {
+    let runs = 0;
+    const handler = server(
+      ping("evt_6b"),
+      async () => {
+        runs += 1;
+        throw new Error("still failing");
+      },
+      { retryDelaysMs: [], sleep: async () => {} },
+    );
     await handler.handle(webhookRequest({}));
     await handler.drain();
     await handler.handle(webhookRequest({}));
     await handler.drain();
     expect(runs).toBe(2);
+  });
+
+  test("runs every queued event when more arrive than the concurrency limit", async () => {
+    let release = (): void => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let eventNumber = 0;
+    let finished = 0;
+    const handler = createWebhookHandler({
+      webhookSecret: "test-secret",
+      logger: silentLogger,
+      maxConcurrency: 2,
+      verify: async () => ping(`evt_burst_${(eventNumber += 1)}`),
+      handlers: {
+        "message.received": on(pingSchema, async () => {
+          await gate;
+          finished += 1;
+        }),
+      },
+    });
+    for (let index = 0; index < 6; index += 1) await handler.handle(webhookRequest({}));
+    release();
+    await handler.drain();
+    expect(finished).toBe(6);
   });
 
   test("keeps the claim after a permanent failure so retries are dropped", async () => {

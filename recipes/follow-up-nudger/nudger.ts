@@ -44,11 +44,17 @@ export async function draftFollowUp(
 
   const thread = await options.inbox.getInboxThread(event.mailbox_id, event.conversation_id);
   const own = thread.address.toLowerCase();
-  const lastSent = thread.data.findLast((message) => sentBy(message, own));
+  const messages = thread.data.toSorted((a, b) => a.received_at.localeCompare(b.received_at));
+  const lastSent = messages.at(-1);
+  // The event can be processed late: if they answered since, there is nothing to chase.
+  if (lastSent === undefined || !sentBy(lastSent, own)) {
+    logger.info("Skipped a follow-up: the other side has answered", { eventId });
+    return "skipped";
+  }
   // A reply draft answers the latest inbound message, so a conversation the
   // owner started and nobody answered has nothing to reply to.
-  const hasInbound = thread.data.some((message) => !sentBy(message, own));
-  if (lastSent === undefined || !hasInbound || thread.version === null) {
+  const hasInbound = messages.some((message) => !sentBy(message, own));
+  if (!hasInbound || thread.version === null) {
     logger.info("Skipped a follow-up: no reply draft is possible here", { eventId });
     return "skipped";
   }

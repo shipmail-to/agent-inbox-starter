@@ -78,9 +78,7 @@ describe("redis event store", () => {
     const redis = fakeRedis();
     const store = createRedisEventStore({ redis });
 
-    const results = await Promise.all(
-      Array.from({ length: 5 }, () => store.claim("evt_race")),
-    );
+    const results = await Promise.all(Array.from({ length: 5 }, () => store.claim("evt_race")));
 
     expect(results.filter((result) => result === "new")).toHaveLength(1);
     expect(results.filter((result) => result === "duplicate")).toHaveLength(4);

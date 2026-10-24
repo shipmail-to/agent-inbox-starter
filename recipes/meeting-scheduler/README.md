@@ -13,12 +13,12 @@ email. The booking link's host is added to the URL allowlist at startup so draft
 
 Set the triage variables from the main README, then optionally:
 
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `SCHEDULING_TIMEZONE` | `UTC` | Time zone the slots are written in |
-| `MEETING_MINUTES` | `30` | Meeting length |
-| `SCHEDULING_DAYS` | `7` | How many days ahead to look |
-| `BOOKING_LINK_ID` | none | A Shipmail booking link to offer as well |
+| Variable              | Default | Purpose                                  |
+| --------------------- | ------- | ---------------------------------------- |
+| `SCHEDULING_TIMEZONE` | `UTC`   | Time zone the slots are written in       |
+| `MEETING_MINUTES`     | `30`    | Meeting length                           |
+| `SCHEDULING_DAYS`     | `7`     | How many days ahead to look              |
+| `BOOKING_LINK_ID`     | none    | A Shipmail booking link to offer as well |
 
 ```bash
 bun run recipe:meeting-scheduler
