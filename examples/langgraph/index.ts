@@ -1,56 +1,73 @@
 import { ChatAnthropic } from "@langchain/anthropic";
-import { Annotation, START, END, StateGraph } from "@langchain/langgraph";
+import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
 
 import {
-  buildUntrustedEmailPrompt,
+  buildTriagePrompt,
   decisionSchema,
   SYSTEM_PROMPT,
   type ModelDecision,
-  type TriageModel,
 } from "../../src/agent.ts";
-import { secureInboundMessage } from "../../src/security.ts";
+import { DEFAULT_MODEL, type StructuredModel, type StructuredRequest } from "../../src/model.ts";
+import {
+  secureInboundMessage,
+  type RawInboundMessage,
+  type SecuredInboundMessage,
+} from "../../src/security.ts";
 
-const State = Annotation.Root({
-  prompt: Annotation<string>(),
-  decision: Annotation<ModelDecision | null>(),
-});
-
-/**
- * A LangGraph node behind the same TriageModel port. Note the absence of a
- * temperature: claude-sonnet-5 rejects non-default sampling parameters.
- */
-export function createLangGraphTriageModel(modelId = "claude-sonnet-5"): TriageModel {
-  const model = new ChatAnthropic({ model: modelId }).withStructuredOutput(decisionSchema);
-  const graph = new StateGraph(State)
-    .addNode("triage", async (state) => ({
-      decision: await model.invoke([
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: state.prompt },
-      ]),
-    }))
-    .addEdge(START, "triage")
-    .addEdge("triage", END)
-    .compile();
-
+/** A LangChain chat model behind the StructuredModel port the handlers and recipes take. */
+export function createLangChainModel(modelId = DEFAULT_MODEL): StructuredModel {
+  const chat = new ChatAnthropic({ model: modelId });
   return {
-    async classify(prompt: string): Promise<ModelDecision> {
-      const result = await graph.invoke({ prompt, decision: null });
-      if (result.decision === null) throw new Error("LangGraph returned no decision");
-      return result.decision;
+    async generate<T>(request: StructuredRequest<T>): Promise<T> {
+      const answer = await chat.withStructuredOutput(request.schema).invoke([
+        { role: "system", content: request.system },
+        { role: "user", content: request.prompt },
+      ]);
+      return request.schema.parse(answer);
     },
   };
 }
 
-const secured = secureInboundMessage(
-  {
+const State = Annotation.Root({
+  raw: Annotation<RawInboundMessage>(),
+  secured: Annotation<SecuredInboundMessage | null>(),
+  decision: Annotation<ModelDecision | null>(),
+});
+
+/**
+ * The starter's steps as graph nodes: the security pass decides whether the
+ * model node runs at all. Add your own nodes after "triage", such as a CRM
+ * lookup or a human approval step.
+ */
+export function createTriageGraph(model: StructuredModel, allowedSenders: readonly string[]) {
+  return new StateGraph(State)
+    .addNode("secure", (state) => {
+      const result = secureInboundMessage(state.raw, { allowedSenders, allowedUrlHosts: [] });
+      return { secured: result.ok ? result.message : null };
+    })
+    .addNode("triage", async (state) => {
+      if (state.secured === null) return { decision: null };
+      const decision = await model.generate({
+        system: SYSTEM_PROMPT,
+        prompt: buildTriagePrompt(state.secured, null),
+        schema: decisionSchema,
+      });
+      return { decision };
+    })
+    .addEdge(START, "secure")
+    .addConditionalEdges("secure", (state) => (state.secured === null ? END : "triage"))
+    .addEdge("triage", END)
+    .compile();
+}
+
+const graph = createTriageGraph(createLangChainModel(), ["customer@example.com"]);
+const result = await graph.invoke({
+  raw: {
     sender: "customer@example.com",
     subject: "Support",
     body: "Can someone help with my account?",
-    bodyIsHtml: false,
   },
-  { allowedSenders: ["customer@example.com"], allowedUrlHosts: [] },
-);
-if (!secured.ok) throw new Error(`Message blocked: ${secured.reason}`);
-
-const model = createLangGraphTriageModel();
-console.info(await model.classify(buildUntrustedEmailPrompt(secured.message)));
+  secured: null,
+  decision: null,
+});
+console.info(result.decision);

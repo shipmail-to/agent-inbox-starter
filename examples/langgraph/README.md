@@ -1,12 +1,11 @@
 # LangGraph example
 
-This example puts a single triage node behind the same inbound security filter used by the root
-starter.
+`createLangChainModel` is a `StructuredModel` backed by a LangChain chat model. `createTriageGraph`
+runs the starter's security pass and triage as two LangGraph nodes, and the model node runs only
+when the security pass accepts the message. Add your own nodes after triage, such as a CRM lookup
+or a human approval step.
 
 ```bash
-bun install
+bun install --ignore-scripts
 ANTHROPIC_API_KEY=sk-ant-replace_me bun start
 ```
-
-Add review and drafting nodes only after the security boundary. Keep sending outside the graph so
-the final action remains deterministic and auditable.

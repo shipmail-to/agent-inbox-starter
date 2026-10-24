@@ -1,0 +1,11 @@
+{
+  "name": "shipmail-agent-inbox-openai-agents-example",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun index.ts"
+  },
+  "dependencies": {
+    "@openai/agents": "^0.21.0"
+  }
+}
