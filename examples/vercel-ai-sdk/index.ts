@@ -1,30 +1,25 @@
 import { anthropic } from "@ai-sdk/anthropic";
-import { generateObject } from "ai";
+import { generateText, Output } from "ai";
 
-import {
-  buildUntrustedEmailPrompt,
-  decisionSchema,
-  SYSTEM_PROMPT,
-  type ModelDecision,
-  type TriageModel,
-} from "../../src/agent.ts";
+import { buildTriagePrompt, decisionSchema, SYSTEM_PROMPT } from "../../src/agent.ts";
+import { DEFAULT_MODEL, type StructuredModel, type StructuredRequest } from "../../src/model.ts";
 import { secureInboundMessage } from "../../src/security.ts";
 
 /**
- * Swapping the model provider means implementing TriageModel, nothing else.
- * The prompt, the schema, and the whole webhook pipeline are unchanged: pass
- * this to createWebhookHandler in place of createAnthropicTriageModel.
+ * Swapping the model provider means implementing StructuredModel, nothing else.
+ * Every handler and recipe calls generate(), so pass this wherever the starter
+ * takes `model`. Change `anthropic(...)` to any AI SDK provider.
  */
-export function createVercelAiTriageModel(modelId = "claude-sonnet-5"): TriageModel {
+export function createVercelAiModel(modelId = DEFAULT_MODEL): StructuredModel {
   return {
-    async classify(prompt: string): Promise<ModelDecision> {
-      const result = await generateObject({
+    async generate<T>(request: StructuredRequest<T>): Promise<T> {
+      const result = await generateText({
         model: anthropic(modelId),
-        system: SYSTEM_PROMPT,
-        schema: decisionSchema,
-        prompt,
+        system: request.system,
+        prompt: request.prompt,
+        output: Output.object({ schema: request.schema }),
       });
-      return result.object;
+      return request.schema.parse(result.output);
     },
   };
 }
@@ -34,11 +29,14 @@ const secured = secureInboundMessage(
     sender: "customer@example.com",
     subject: "Question",
     body: "Could you send your support hours?",
-    bodyIsHtml: false,
   },
   { allowedSenders: ["customer@example.com"], allowedUrlHosts: [] },
 );
 if (!secured.ok) throw new Error(`Message blocked: ${secured.reason}`);
 
-const model = createVercelAiTriageModel();
-console.info(await model.classify(buildUntrustedEmailPrompt(secured.message)));
+const decision = await createVercelAiModel().generate({
+  system: SYSTEM_PROMPT,
+  prompt: buildTriagePrompt(secured.message, null),
+  schema: decisionSchema,
+});
+console.info(decision);

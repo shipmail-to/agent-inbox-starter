@@ -1,4 +1,4 @@
-import { ShipMailClient } from "shipmail";
+import { ShipmailClient } from "shipmail";
 import { z } from "zod";
 
 const env = z
@@ -9,7 +9,7 @@ const env = z
   })
   .parse(process.env);
 
-const client = new ShipMailClient(env.SHIPMAIL_API_KEY);
+const client = new ShipmailClient(env.SHIPMAIL_API_KEY);
 const message = await client.mailboxes.injectSandboxInbound(env.SHIPMAIL_MAILBOX_ID, {
   from: env.SANDBOX_FROM,
   subject: "Shipmail agent inbox sandbox check",

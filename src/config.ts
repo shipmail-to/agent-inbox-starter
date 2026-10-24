@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { DEFAULT_MODEL } from "./model.ts";
+
 // Domains where a *@domain allowlist entry would let anyone with a free account
 // through, which defeats the point of allowlisting.
 const PUBLIC_MAIL_DOMAINS: readonly string[] = [
@@ -26,16 +28,30 @@ function parseCsv(value: string): string[] {
     .filter((item) => item.length > 0);
 }
 
-const csvSchema = z.string().transform(parseCsv);
-const optionalCsvSchema = z.string().default("").transform(parseCsv);
+/** An empty value, as copied from .env.example or set in a dashboard, means unset. */
+export function blankAsUnset<T extends z.ZodType>(schema: T) {
+  return z.preprocess((value) => (value === "" ? undefined : value), schema);
+}
 
-const envSchema = z.object({
+const csvSchema = z.string().transform(parseCsv);
+export const optionalCsvSchema = z.string().default("").transform(parseCsv);
+
+/** The variables every recipe needs. Recipes extend it with their own. */
+export const recipeEnvSchema = z.object({
   SHIPMAIL_API_KEY: z.string().min(1),
   SHIPMAIL_MAILBOX_ID: z.string().min(1),
-  SHIPMAIL_WEBHOOK_SECRET: z.string().min(1),
   ANTHROPIC_API_KEY: z.string().min(1),
+  ANTHROPIC_MODEL: z.string().min(1).default(DEFAULT_MODEL),
+});
+
+/** Adds what a webhook server needs. */
+export const webhookEnvSchema = recipeEnvSchema.extend({
+  SHIPMAIL_WEBHOOK_SECRET: z.string().min(1),
   PORT: z.coerce.number().int().min(1).max(65_535).default(3000),
-  REDIS_URL: z.string().min(1).optional(),
+  REDIS_URL: blankAsUnset(z.string().optional()),
+});
+
+const envSchema = webhookEnvSchema.extend({
   SHIPMAIL_ALLOWED_SENDERS: csvSchema.pipe(z.array(z.string()).min(1)),
   SHIPMAIL_ALLOWED_URL_HOSTS: optionalCsvSchema,
   AUTO_SEND: z
@@ -50,6 +66,7 @@ export type AppConfig = {
   readonly mailboxId: string;
   readonly webhookSecret: string;
   readonly anthropicApiKey: string;
+  readonly anthropicModel: string;
   readonly port: number;
   readonly redisUrl: string | undefined;
   readonly allowedSenders: readonly string[];
@@ -77,6 +94,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     mailboxId: parsed.SHIPMAIL_MAILBOX_ID,
     webhookSecret: parsed.SHIPMAIL_WEBHOOK_SECRET,
     anthropicApiKey: parsed.ANTHROPIC_API_KEY,
+    anthropicModel: parsed.ANTHROPIC_MODEL,
     port: parsed.PORT,
     redisUrl: parsed.REDIS_URL,
     allowedSenders: parsed.SHIPMAIL_ALLOWED_SENDERS,

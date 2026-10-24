@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 
-import { loadConfig } from "../src/config.ts";
+import { z } from "zod";
+
+import { blankAsUnset, loadConfig } from "../src/config.ts";
 
 const requiredEnvironment = {
   SHIPMAIL_API_KEY: "sm_test",
@@ -51,5 +53,18 @@ describe("configuration", () => {
       SHIPMAIL_ALLOWED_SENDERS: "*@acme.com,person@example.com",
     });
     expect(config.allowedSenders).toEqual(["*@acme.com", "person@example.com"]);
+  });
+
+  test("treats an empty REDIS_URL as unset", () => {
+    expect(loadConfig({ ...requiredEnvironment, REDIS_URL: "" }).redisUrl).toBeUndefined();
+  });
+
+  test("defaults the model to Claude Sonnet 5.5", () => {
+    expect(loadConfig(requiredEnvironment).anthropicModel).toBe("claude-sonnet-5-5");
+  });
+
+  test("treats a blank optional recipe variable as unset", () => {
+    const schema = z.object({ TOKEN: blankAsUnset(z.string().optional()) });
+    expect(schema.parse({ TOKEN: "" }).TOKEN).toBeUndefined();
   });
 });

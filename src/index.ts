@@ -1,36 +1,29 @@
-import { RedisClient } from "bun";
-import { ShipMailClient } from "shipmail";
+import { ShipmailClient } from "shipmail";
 
-import { createAnthropicTriageModel } from "./agent.ts";
 import { loadConfig } from "./config.ts";
-import { createRedisEventStore } from "./event-store-redis.ts";
-import type { EventStore } from "./event-store.ts";
-import { startWebhookServer } from "./webhook.ts";
+import { eventStoreFromUrl } from "./event-store-redis.ts";
+import { createAnthropicModel } from "./model.ts";
+import { startWebhookServer } from "./server.ts";
+import { triageHandler } from "./triage.ts";
 
 const config = loadConfig();
+const eventStore = eventStoreFromUrl(config.redisUrl);
+const shipmail = new ShipmailClient(config.shipmailApiKey);
 
-// Without REDIS_URL the handler falls back to its in-memory store, which is
-// correct for exactly one process. Warn rather than fail: a single instance is a
-// reasonable way to run this, but silently deduplicating per-process across
-// several instances is not.
-let eventStore: EventStore | undefined;
-if (config.redisUrl === undefined) {
-  console.warn(
-    "REDIS_URL is not set. Deduplication is in-memory and per-process, so do not run more than one instance.",
-  );
-} else {
-  eventStore = createRedisEventStore({ redis: new RedisClient(config.redisUrl) });
-}
-const shipmail = new ShipMailClient(config.shipmailApiKey);
 const server = startWebhookServer(config.port, {
   webhookSecret: config.webhookSecret,
-  mailboxId: config.mailboxId,
-  allowedSenders: config.allowedSenders,
-  allowedUrlHosts: config.allowedUrlHosts,
-  autoSend: config.autoSend,
-  requireAuthenticatedSender: config.requireAuthenticatedSender,
   eventStore,
-  mailboxes: shipmail.mailboxes,
-  model: createAnthropicTriageModel(config.anthropicApiKey),
+  handlers: {
+    "message.received": triageHandler({
+      mailboxId: config.mailboxId,
+      allowedSenders: config.allowedSenders,
+      allowedUrlHosts: config.allowedUrlHosts,
+      autoSend: config.autoSend,
+      requireAuthenticatedSender: config.requireAuthenticatedSender,
+      inbox: shipmail.mailboxes,
+      model: createAnthropicModel(config.anthropicApiKey, config.anthropicModel),
+      eventStore,
+    }),
+  },
 });
 console.info(`Shipmail agent inbox listening on ${server.url}`);

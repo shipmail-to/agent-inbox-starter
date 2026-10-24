@@ -1,7 +1,13 @@
-import type { InboxFullMessage, InboxThread, InboxThreads } from "shipmail";
+import type {
+  EmailAuthenticationResults,
+  EmailAuthVerdict,
+  InboxFullMessage,
+  InboxMessageSecurity,
+  InboxThread,
+} from "shipmail";
 
-import type { Logger } from "../src/agent.ts";
-import type { EmailAuthenticationResults, EmailAuthVerdict } from "../src/authentication.ts";
+import { SUPPORTED_WEBHOOK_VERSION } from "../src/events.ts";
+import type { Logger } from "../src/server.ts";
 
 export const silentLogger: Logger = {
   info(): void {},
@@ -11,17 +17,24 @@ export const silentLogger: Logger = {
 
 export const MAILBOX_ID = "mailbox_123";
 export const MAILBOX_ADDRESS = "agent@example.test";
+export const CONVERSATION_ID = "thd_123";
+
+export const CLEAN_SCAN: InboxMessageSecurity = {
+  status: "not_flagged",
+  risk_codes: [],
+  scanner: "pattern_v1",
+  content_sha256: "0".repeat(64),
+  review: null,
+};
 
 type MessageOptions = {
   readonly id: string;
   readonly from: string;
   readonly subject: string;
-  readonly text?: string | undefined;
-  readonly html?: string | undefined;
+  readonly text: string;
   readonly auth?: EmailAuthenticationResults | null | undefined;
+  readonly security?: InboxMessageSecurity | undefined;
 };
-
-export type ThreadMessageFixture = InboxFullMessage;
 
 export function authenticationResults(
   spf: EmailAuthVerdict,
@@ -37,13 +50,12 @@ export function authenticationResults(
   };
 }
 
-export function message(options: MessageOptions): ThreadMessageFixture {
-  const hasText = options.text !== undefined;
-  const value = options.text ?? options.html ?? "";
+export function message(options: MessageOptions): InboxFullMessage {
   return {
     object: "inbox_message_full",
     id: options.id,
     thread_id: "thread_123",
+    conversation_id: CONVERSATION_ID,
     mailbox_id: MAILBOX_ID,
     address: MAILBOX_ADDRESS,
     folder_ids: [],
@@ -53,76 +65,40 @@ export function message(options: MessageOptions): ThreadMessageFixture {
     cc: null,
     reply_to: null,
     subject: options.subject,
-    received_at: "2026-07-29T12:00:00.000Z",
-    size: value.length,
-    preview: value.slice(0, 40),
+    received_at: "2026-10-24T12:00:00.000Z",
+    size: options.text.length,
+    preview: options.text.slice(0, 40),
     has_attachment: false,
     message_id: null,
     in_reply_to: null,
     references: null,
-    body_values: { part: { value, is_encoding_problem: false } },
-    text_body: hasText ? [{ part_id: "part", type: "text/plain" }] : [],
-    html_body: hasText ? [] : [{ part_id: "part", type: "text/html" }],
+    body_values: { part: { value: options.text, is_encoding_problem: false } },
+    text_body: [{ part_id: "part", type: "text/plain" }],
+    html_body: [],
     attachments: [],
+    reply_text: options.text,
     authentication_results: options.auth ?? null,
+    security: options.security ?? CLEAN_SCAN,
   };
 }
 
 export function thread(
-  threadId: string,
-  messages: readonly ThreadMessageFixture[],
-  address: string = MAILBOX_ADDRESS,
+  messages: readonly InboxFullMessage[],
+  options: { readonly address?: string; readonly version?: number | null } = {},
 ): InboxThread {
   return {
     object: "inbox_thread",
     mailbox_id: MAILBOX_ID,
-    address,
-    thread_id: threadId,
+    address: options.address ?? MAILBOX_ADDRESS,
+    thread_id: "thread_123",
+    conversation_id: CONVERSATION_ID,
+    version: options.version === undefined ? 7 : options.version,
     data: messages,
-  };
-}
-
-export function threadPage(
-  entries: readonly { readonly thread_id: string; readonly reply_version: number }[],
-  nextCursor: string | null = null,
-): InboxThreads {
-  return {
-    object: "inbox_threads",
-    mailbox_id: MAILBOX_ID,
-    data: entries.map((entry) => ({
-      object: "inbox_thread_summary",
-      id: `sum_${entry.thread_id}`,
-      thread_id: entry.thread_id,
-      reply_state: "needs_reply",
-      reply_version: entry.reply_version,
-      needs_reply_since: null,
-      subject: null,
-      latest_from_address: null,
-      message_count: 1,
-      first_message_at: "2026-07-29T12:00:00.000Z",
-      last_message_at: "2026-07-29T12:00:00.000Z",
-      latest_message_id: null,
-      latest_email_id: null,
-      latest_inbound_message_id: null,
-      latest_inbound_email_id: null,
-      latest_inbound_at: null,
-      latest_outbound_message_id: null,
-      latest_outbound_email_id: null,
-      latest_outbound_at: null,
-    })),
-    summary: { needs_reply: 1, waiting_on_contact: 0, resolved: 0, no_reply_expected: 0 },
-    pagination: {
-      limit: 100,
-      has_more: nextCursor !== null,
-      next_cursor: nextCursor,
-      snapshot_at: "2026-07-29T12:00:00.000Z",
-    },
   };
 }
 
 type EventOptions = {
   readonly eventId: string;
-  readonly threadId: string;
   readonly from: string;
   readonly emailId?: string | null | undefined;
   readonly trackedMessageId?: string | undefined;
@@ -130,14 +106,27 @@ type EventOptions = {
   readonly test?: boolean | undefined;
 };
 
-export function receivedEvent(options: EventOptions): Record<string, unknown> {
+export function envelope(
+  eventId: string,
+  eventType: string,
+  data: Readonly<Record<string, unknown>>,
+  test = false,
+): Record<string, unknown> {
   return {
-    version: "2026-07-22",
-    event_id: options.eventId,
-    event_type: "message.received",
-    created_at: "2026-07-29T12:00:00.000Z",
-    test: options.test ?? false,
-    data: {
+    version: SUPPORTED_WEBHOOK_VERSION,
+    event_id: eventId,
+    event_type: eventType,
+    created_at: "2026-10-24T12:00:00.000Z",
+    test,
+    data,
+  };
+}
+
+export function receivedEvent(options: EventOptions): Record<string, unknown> {
+  return envelope(
+    options.eventId,
+    "message.received",
+    {
       tracked_message_id: options.trackedMessageId ?? "msg_123",
       mailbox_id: MAILBOX_ID,
       client_reference: null,
@@ -148,10 +137,12 @@ export function receivedEvent(options: EventOptions): Record<string, unknown> {
       cc: [],
       bcc: [],
       subject: options.subject ?? "Question",
-      thread_id: options.threadId,
-      received_at: "2026-07-29T12:00:00.000Z",
+      thread_id: "thread_123",
+      conversation_id: CONVERSATION_ID,
+      received_at: "2026-10-24T12:00:00.000Z",
     },
-  };
+    options.test ?? false,
+  );
 }
 
 export function webhookRequest(payload: unknown): Request {

@@ -1,7 +1,7 @@
 {
   "name": "shipmail-agent-inbox-starter",
-  "version": "0.1.0",
-  "description": "A secure, draft-first AI agent inbox starter for Shipmail",
+  "version": "0.2.0",
+  "description": "A secure, draft-first AI agent inbox starter for Shipmail, with recipes",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -12,17 +12,24 @@
   "scripts": {
     "dev": "bun --watch src/index.ts",
     "start": "bun src/index.ts",
+    "recipe:meeting-scheduler": "bun recipes/meeting-scheduler/index.ts",
+    "recipe:follow-up-nudger": "bun recipes/follow-up-nudger/index.ts",
+    "recipe:meeting-brief": "bun recipes/meeting-brief/index.ts",
+    "recipe:morning-digest": "bun recipes/morning-digest/index.ts",
+    "recipe:lead-qualifier": "bun recipes/lead-qualifier/index.ts",
+    "recipe:signup-code": "bun recipes/agent-signup-inbox/index.ts",
+    "webhook:create": "bun scripts/create-webhook.ts",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "sandbox:e2e": "bun scripts/sandbox-e2e.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.115.0",
-    "shipmail": "^0.4.12",
-    "zod": "^4.3.6"
+    "@anthropic-ai/sdk": "^1.3.0",
+    "shipmail": "^0.6.6",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@types/bun": "^1.3.10",
+    "@types/bun": "^1.4.4",
     "typescript": "^7.0.2"
   }
 }

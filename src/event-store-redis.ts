@@ -1,4 +1,6 @@
-import type { EventClaim, EventStore } from "./event-store.ts";
+import { RedisClient } from "bun";
+
+import { createMemoryEventStore, type EventClaim, type EventStore } from "./event-store.ts";
 
 /**
  * A shared EventStore, so more than one process can run safely.
@@ -76,4 +78,17 @@ export function createRedisEventStore(options: RedisEventStoreOptions): EventSto
       return toCount(await redis.send("GET", [replyKey(threadId)]));
     },
   };
+}
+
+/**
+ * The store a process should use: Redis when `REDIS_URL` is set, otherwise the
+ * in-memory store, which is correct for exactly one process. It warns rather
+ * than fails, because a single instance is a reasonable way to run this.
+ */
+export function eventStoreFromUrl(redisUrl: string | undefined): EventStore {
+  if (redisUrl !== undefined) return createRedisEventStore({ redis: new RedisClient(redisUrl) });
+  console.warn(
+    "REDIS_URL is not set. Deduplication is in-memory and per-process, so do not run more than one instance.",
+  );
+  return createMemoryEventStore();
 }
