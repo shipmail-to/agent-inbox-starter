@@ -52,4 +52,12 @@ describe("configuration", () => {
     });
     expect(config.allowedSenders).toEqual(["*@acme.com", "person@example.com"]);
   });
+
+  test("treats an empty REDIS_URL as unset", () => {
+    expect(loadConfig({ ...requiredEnvironment, REDIS_URL: "" }).redisUrl).toBeUndefined();
+  });
+
+  test("defaults the model to Claude Sonnet 5.5", () => {
+    expect(loadConfig(requiredEnvironment).anthropicModel).toBe("claude-sonnet-5-5");
+  });
 });
